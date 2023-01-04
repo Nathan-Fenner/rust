@@ -27,6 +27,15 @@ enum BurritoKinds<G> {
 }
 impl<D: T3> T2 for BurritoKinds<D> {}
 
+struct Taco<H>(bool, H);
+impl<E: T3> T2 for Taco<E> {}
+
+enum TacoKinds<H> {
+    OneTaco(bool, H),
+    TwoTacos(bool, H, H),
+}
+impl<F: T3> T2 for TacoKinds<F> {}
+
 fn want<V: T1>(_x: V) {}
 
 fn example<Q>(q: Q) {
@@ -34,6 +43,12 @@ fn example<Q>(q: Q) {
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
     want(Wrapper { value: BurritoKinds::SmallBurrito { spicy: true, small_filling: q } });
+    //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    want(Wrapper { value: Taco(false, q) });
+    //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    want(Wrapper { value: TacoKinds::OneTaco(false, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 }
 

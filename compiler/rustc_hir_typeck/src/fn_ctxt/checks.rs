@@ -2095,15 +2095,13 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .map(|(index, _ty_arg)| index)
             .collect();
 
-        eprintln!("@@@@@@@@@@@@ checing expr...");
-
         // Different expression require different treatment. In general, we hope that we have a literal
         // expression which produces the current `Self` type. Moreoever, we hope that it has a single
         // field which can be "blamed" for the missing trait, so that it can be highlighted.
         match expr.kind {
             hir::ExprKind::Struct(
                 hir::QPath::Resolved(
-                    None,
+                    _,
                     hir::Path { res: hir::def::Res::Def(struct_def_kind, struct_def_id), .. },
                 ),
                 struct_fields,
@@ -2200,10 +2198,98 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 // We failed to find a matching field in the original struct expression.
                 Err(expr)
             }
-            _ => {
-                eprintln!("!!!!!!!!!!!!! cannot handle expr {:#?}", expr);
-                Err(expr)
-            } // Stop propagating.
+            hir::ExprKind::Call(call_ctor_func, call_ctor_args) => match &call_ctor_func.kind {
+                hir::ExprKind::Path(hir::QPath::Resolved(
+                    _,
+                    hir::Path {
+                        res:
+                            hir::def::Res::Def(
+                                hir::def::DefKind::Ctor(_ctor_of, hir::def::CtorKind::Fn),
+                                ctor_def_id,
+                            ),
+                        ..
+                    },
+                )) => {
+                    let (struct_variant_def, struct_def_generics) = {
+                        let mut struct_def_id = self.tcx.parent(*ctor_def_id);
+                        if impl_self_ty_path.did() != struct_def_id {
+                            // Why do we try this twice?
+                            //
+                            // If we're looking at a struct tuple constructor, we'll get the ctor.
+                            // And the ctor's parent is the struct itself.
+                            //
+                            // However, if we're looking at an enum ctor, its parent is the enum variant,
+                            // whose parent is the enum itself.
+                            //
+                            // So the simplest fix is to try both `.parent()` and `.parent().parent()`.
+                            struct_def_id = self.tcx.parent(struct_def_id);
+                        }
+                        if impl_self_ty_path.did() != struct_def_id {
+                            // If the struct is not the same as `Self`, we cannot refine.
+                            return Err(expr);
+                        }
+
+                        let struct_def_generics: &ty::Generics =
+                            self.tcx.generics_of(struct_def_id);
+
+                        let struct_variant_def: Option<&ty::VariantDef> = impl_self_ty_path
+                            .variants()
+                            .iter()
+                            .find(|variant: &&ty::VariantDef| -> bool {
+                                variant.ctor.map(|ctor| ctor.1 == *ctor_def_id).unwrap_or(false)
+                            });
+
+                        let Some(struct_variant_def) = struct_variant_def else {
+                            return Err(expr);
+                        };
+
+                        // Use the sole variant definition as our variant from now on:
+                        (struct_variant_def, struct_def_generics)
+                    };
+
+                    // Only retain the generics which are relevant (according to the `impl`).
+                    let struct_def_generics: Vec<&ty::GenericParamDef> = relevant_ty_args_indices
+                        .into_iter()
+                        .filter_map(|index| struct_def_generics.params.get(index))
+                        .collect();
+
+                    // The struct being constructed is the same as the struct in the impl.
+
+                    let blameable_field_defs: Vec<&ty::FieldDef> = struct_variant_def
+                        .fields
+                        .iter()
+                        .filter(|field_def| {
+                            let field_type: Ty<'tcx> = self.tcx.type_of(field_def.did);
+
+                            // Only retain fields which mention the blameable generics.
+                            struct_def_generics
+                                .iter()
+                                .any(|param| find_param_def_in_ty_walker(field_type.walk(), param))
+                        })
+                        .collect();
+
+                    if blameable_field_defs.len() != 1 {
+                        // We must have a single blameable field, in order to be able to blame it.
+                        return Err(expr);
+                    }
+
+                    let blameable_field_def: &ty::FieldDef = blameable_field_defs[0];
+                    let blameable_field_index = struct_variant_def
+                        .fields
+                        .iter()
+                        .position(|field_def| field_def == blameable_field_def)
+                        .expect("exists in list");
+
+                    if blameable_field_index < call_ctor_args.len() {
+                        return Ok(&call_ctor_args[blameable_field_index]);
+                    }
+
+                    // We failed to find a matching field in the original struct expression.
+                    Err(expr)
+                }
+                call_ctor_func_kind => Err(expr),
+            },
+            _ => Err(expr),
         }
     }
 
