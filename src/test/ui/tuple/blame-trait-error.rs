@@ -43,6 +43,8 @@ struct GenericBurrito<Spiciness, Filling> {
 impl<X, Y: T3> T2 for GenericBurrito<X, Y> {}
 struct NotSpicy;
 
+impl<A: T3, B: T3> T2 for (A, B) {}
+
 fn want<V: T1>(_x: V) {}
 
 fn example<Q>(q: Q) {
@@ -59,6 +61,9 @@ fn example<Q>(q: Q) {
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
     want(Wrapper { value: GenericBurrito { spiciness: NotSpicy, filling: q } });
+    //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    want(Wrapper { value: (3, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 }
 

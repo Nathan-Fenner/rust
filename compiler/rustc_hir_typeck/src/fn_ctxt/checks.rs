@@ -2091,6 +2091,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             }
         };
 
+        enum PointableType<'tcx> {
+            Adt(ty::AdtDef<'tcx>),
+            Tuple,
+        }
+
         // We can only handle Adt types for now.
         // TODO: We could support blanket impls here as well.
         // TODO: We could support tuple impls here as well.
@@ -2098,8 +2103,18 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // TODO: We could support ref impls here as well.
         // Note that there is no point in supporting "primitive" types like char/i32,
         // since we cannot refine such a span any more anyway.
-        let ty::Adt(impl_self_ty_path, impl_self_ty_args) = impl_self_ty.kind() else {
-            return Err(expr);
+        let (impl_self_ty, impl_self_ty_args) = match impl_self_ty.kind() {
+            ty::Adt(impl_self_ty_path, impl_self_ty_args) => (
+                PointableType::Adt(*impl_self_ty_path),
+                impl_self_ty_args.iter().collect::<Vec<_>>(),
+            ),
+            ty::Tuple(impl_self_ty_args) => (
+                PointableType::Tuple,
+                impl_self_ty_args.iter().map(|t| ty::GenericArg::from(t)).collect::<Vec<_>>(),
+            ),
+            _ => {
+                return Err(expr);
+            }
         };
 
         // We need to find which of the type's arguments are relevant to this obligation.
@@ -2107,8 +2122,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // was `B: Display` then we'd care about indexes `vec![1, 2]`, but if it was `C: PartialEq` then we'd
         // care about index `vec![0, 2]`.
         let relevant_ty_args_indices: Vec<usize> = impl_self_ty_args
-            .as_slice()
-            .iter()
+            .into_iter()
             .enumerate()
             .filter(|(_index, ty_arg)| {
                 relevant_impl_generics
@@ -2130,6 +2144,10 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 struct_fields,
                 _, // NOTE: "Rest" fields in structs are currently ignored by this function.
             ) => {
+                let PointableType::Adt(impl_self_ty_path) = impl_self_ty else {
+                    // An Adt expression requires an Adt type and vice-versa.
+                    return Err(expr);
+                };
                 // We can directly support `Variant` and `Struct` struct expressions:
                 let (struct_variant_def, struct_def_generics): (&ty::VariantDef, &ty::Generics) =
                     match struct_def_kind {
@@ -2233,6 +2251,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         ..
                     },
                 )) => {
+                    let PointableType::Adt(impl_self_ty_path) = impl_self_ty else {
+                        // An Adt expression requires an Adt type and vice-versa.
+                        return Err(expr);
+                    };
+
                     let (struct_variant_def, struct_def_generics) = {
                         let mut struct_def_id = self.tcx.parent(*ctor_def_id);
                         if impl_self_ty_path.did() != struct_def_id {
@@ -2312,6 +2335,14 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 }
                 _ => Err(expr),
             },
+            hir::ExprKind::Tup(elements) => {
+                if let &[single_index] = relevant_ty_args_indices.as_slice() {
+                    if single_index < elements.len() {
+                        return Ok(&elements[single_index]);
+                    }
+                }
+                return Err(expr);
+            }
             _ => Err(expr),
         }
     }
