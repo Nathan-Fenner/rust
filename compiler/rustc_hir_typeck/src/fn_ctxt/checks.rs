@@ -24,8 +24,10 @@ use rustc_infer::infer::error_reporting::{FailureCode, ObligationCauseExt};
 use rustc_infer::infer::type_variable::{TypeVariableOrigin, TypeVariableOriginKind};
 use rustc_infer::infer::InferOk;
 use rustc_infer::infer::TypeTrace;
+use rustc_infer::traits::PredicateObligation;
 use rustc_middle::ty::adjustment::AllowTwoPhase;
 use rustc_middle::ty::visit::TypeVisitable;
+use rustc_middle::ty::walk::TypeWalker;
 use rustc_middle::ty::{self, DefIdTree, IsSuggestable, Ty, TypeSuperVisitable, TypeVisitor};
 use rustc_session::Session;
 use rustc_span::symbol::{kw, Ident};
@@ -523,7 +525,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // Sometimes macros mess up the spans, so do not normalize the
             // arg span to equal the error span, because that's less useful
             // than pointing out the arg expr in the wrong context.
-            if normalized_span.source_equal(error_span) { span } else { normalized_span }
+            if normalized_span.source_equal(error_span) {
+                span
+            } else {
+                normalized_span
+            }
         };
 
         // Precompute the provided types and spans, since that's all we typically need for below
@@ -776,9 +782,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // can be collated pretty easily if needed.
 
         // Next special case: if there is only one "Incompatible" error, just emit that
-        if let [
-            Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err))),
-        ] = &errors[..]
+        if let [Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err)))] =
+            &errors[..]
         {
             let (formal_ty, expected_ty) = formal_and_expected_inputs[*expected_idx];
             let (provided_ty, provided_arg_span) = provided_arg_tys[*provided_idx];
@@ -1520,25 +1525,21 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     // Our block must be a `assign desugar local; assignment`
                                     if let Some(hir::Node::Block(hir::Block {
                                         stmts:
-                                            [
-                                                hir::Stmt {
-                                                    kind:
-                                                        hir::StmtKind::Local(hir::Local {
-                                                            source:
-                                                                hir::LocalSource::AssignDesugar(_),
-                                                            ..
-                                                        }),
-                                                    ..
-                                                },
-                                                hir::Stmt {
-                                                    kind:
-                                                        hir::StmtKind::Expr(hir::Expr {
-                                                            kind: hir::ExprKind::Assign(..),
-                                                            ..
-                                                        }),
-                                                    ..
-                                                },
-                                            ],
+                                            [hir::Stmt {
+                                                kind:
+                                                    hir::StmtKind::Local(hir::Local {
+                                                        source: hir::LocalSource::AssignDesugar(_),
+                                                        ..
+                                                    }),
+                                                ..
+                                            }, hir::Stmt {
+                                                kind:
+                                                    hir::StmtKind::Expr(hir::Expr {
+                                                        kind: hir::ExprKind::Assign(..),
+                                                        ..
+                                                    }),
+                                                ..
+                                            }],
                                         ..
                                     })) = self.tcx.hir().find(blk.hir_id)
                                     {
@@ -1946,7 +1947,14 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         if let [(idx, _)] = args_referencing_param.as_slice()
             && let Some(arg) = receiver
                 .map_or(args.get(*idx), |rcvr| if *idx == 0 { Some(rcvr) } else { args.get(*idx - 1) }) {
+
             error.obligation.cause.span = arg.span.find_ancestor_in_same_ctxt(error.obligation.cause.span).unwrap_or(arg.span);
+
+            if let hir::Node::Expr(arg_expr) = self.tcx.hir().get(arg.hir_id) {
+                // This is more specific than pointing at the entire argument.
+                self.point_at_specific_expr_if_possible(error, arg_expr)
+            }
+
             error.obligation.cause.map_code(|parent_code| {
                 ObligationCauseCode::FunctionArgumentObligation {
                     arg_hir_id: arg.hir_id,
@@ -1962,6 +1970,183 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
 
         false
+    }
+
+    fn point_at_specific_expr_if_possible_for_obligation_cause_code(
+        &self,
+        obligation_cause_code: &traits::ObligationCauseCode<'tcx>,
+        expr: &'tcx hir::Expr<'tcx>,
+    ) -> Result<&'tcx hir::Expr<'tcx>, &'tcx hir::Expr<'tcx>> {
+        match obligation_cause_code {
+            traits::ObligationCauseCode::ImplDerivedObligation(impl_derived) => self
+                .point_at_specific_expr_if_possible_for_derived_predicate_obligation(
+                    impl_derived,
+                    expr,
+                ),
+            traits::ObligationCauseCode::ExprBindingObligation(_, _, _, _) => Ok(expr),
+            _ => {
+                // Err(expr) indicates that we cannot process any further.
+                Err(expr)
+            }
+        }
+    }
+
+    fn point_at_specific_expr_if_possible_for_derived_predicate_obligation(
+        &self,
+        obligation: &traits::ImplDerivedObligationCause<'tcx>,
+        expr: &'tcx hir::Expr<'tcx>,
+    ) -> Result<&'tcx hir::Expr<'tcx>, &'tcx hir::Expr<'tcx>> {
+        if obligation.derived.parent_trait_pred.skip_binder().polarity != ty::ImplPolarity::Positive
+        {
+            // For now, ignore non-positive trait bounds.
+            return Err(expr);
+        }
+
+        let expr = self.point_at_specific_expr_if_possible_for_obligation_cause_code(
+            &*obligation.derived.parent_code,
+            expr,
+        )?;
+
+        match expr.kind {
+            hir::ExprKind::Struct(
+                hir::QPath::Resolved(
+                    None,
+                    hir::Path {
+                        res: hir::def::Res::Def(hir::def::DefKind::Struct, struct_def_id),
+                        ..
+                    },
+                ),
+                struct_fields,
+                _, // NOTE: "Rest" fields in structs are currently ignored by this function.
+            ) => {
+                let impl_generics: &ty::Generics = self.tcx.generics_of(obligation.impl_def_id);
+                // The relevant generics occur in this predicate.
+
+                // Now we look up the Self type for the trait impl.
+                let impl_trait_ref: Option<ty::TraitRef<'tcx>> =
+                    self.tcx.impl_trait_ref(obligation.impl_def_id);
+
+                let Some(impl_trait_ref) = impl_trait_ref else {
+                    return Err(expr); // We must have a valid impl ref.
+                };
+                let impl_self_ty: Ty<'tcx> = impl_trait_ref.self_ty();
+
+                let ty::Adt(impl_self_ty_path, impl_self_ty_args) = impl_self_ty.kind() else {
+                    return Err(expr);
+                };
+
+                if &impl_self_ty_path.did() != struct_def_id {
+                    // If the struct in the impl is different from the struct constructor
+                    // we're using, then we cannot make progress.
+                    return Err(expr);
+                }
+
+                // The struct being constructed is the same as the struct in the impl.
+
+                // Which of the self's type arguments use variables used in the predicate?
+                let mut relevant_impl_generics: Vec<&ty::GenericParamDef> = Vec::new();
+                for param in impl_generics.params.iter() {
+                    if find_param_def_in_ty_walker(impl_self_ty.walk(), param) {
+                        relevant_impl_generics.push(param);
+                    }
+                }
+                let mut relevant_ty_args_indices: Vec<usize> = Vec::new();
+                for (index, ty_arg) in impl_self_ty_args.as_slice().iter().enumerate() {
+                    let mut found = false;
+                    for param in relevant_impl_generics.iter() {
+                        if find_param_def_in_ty_walker(ty_arg.walk(), param) {
+                            found = true;
+                        }
+                    }
+                    if found {
+                        relevant_ty_args_indices.push(index);
+                    }
+                    // in ty_arg, at least one of the type parameters mentioned above must be used.
+                }
+
+                let struct_def_generics: &ty::Generics = self.tcx.generics_of(struct_def_id);
+
+                let struct_variant_defs: Vec<&ty::VariantDef> =
+                    impl_self_ty_path.variants().iter().collect::<Vec<_>>();
+
+                if struct_variant_defs.len() != 1 {
+                    // We expect exactly one variant to exist, since it's a struct type.
+                    return Err(expr);
+                }
+
+                let struct_variant_def: &ty::VariantDef = struct_variant_defs[0];
+
+                let mut blameable_field_defs: Vec<&ty::FieldDef> = Vec::new();
+                for field_def in struct_variant_def.fields.iter() {
+                    let field_type: Ty<'tcx> = self.tcx.type_of(field_def.did);
+                    let mut is_blameable = false;
+
+                    for param in struct_def_generics.params.iter() {
+                        if find_param_def_in_ty_walker(field_type.walk(), param) {
+                            is_blameable = true;
+                            break;
+                        }
+                    }
+
+                    if is_blameable {
+                        blameable_field_defs.push(field_def);
+                    }
+                }
+
+                if blameable_field_defs.len() != 1 {
+                    // We must have a single blameable field, in order to be able to blame it.
+                    return Err(expr);
+                }
+
+                let blameable_field_def: &ty::FieldDef = blameable_field_defs[0];
+
+                for field in struct_fields.iter() {
+                    if field.ident.as_str() == blameable_field_def.ident(self.tcx).as_str() {
+                        // Blame this field!
+                        return Ok(field.expr);
+                    }
+                }
+
+                // We failed to find a matching field in the original struct expression.
+                Err(expr)
+            }
+            _ => Err(expr), // Stop propagating.
+        }
+    }
+
+    fn point_at_specific_expr_if_possible_for_predicate_obligation(
+        &self,
+        obligation: &PredicateObligation<'tcx>,
+        expr: &'tcx hir::Expr<'tcx>,
+    ) -> Result<&'tcx hir::Expr<'tcx>, &'tcx hir::Expr<'tcx>> {
+        self.point_at_specific_expr_if_possible_for_obligation_cause_code(
+            obligation.cause.code(),
+            expr,
+        )
+    }
+
+    /**
+     * Recursively searches for the most-specific blamable expression.
+     * Specifically, looks for constructor expressions, e.g. `(false, 5)` constructs a tuple
+     * or `Some(5)` constructs an `Option<i32>` and pairs them with their derived impl predicates.
+     */
+    fn point_at_specific_expr_if_possible(
+        &self,
+        error: &mut traits::FulfillmentError<'tcx>,
+        expr: &'tcx hir::Expr<'tcx>,
+    ) {
+        let expr = match self
+            .point_at_specific_expr_if_possible_for_predicate_obligation(&error.obligation, expr)
+        {
+            Ok(expr) => expr,
+            Err(expr) => expr,
+        };
+
+        // update the error span.
+        error.obligation.cause.span = expr
+            .span
+            .find_ancestor_in_same_ctxt(error.obligation.cause.span)
+            .unwrap_or(error.obligation.cause.span);
     }
 
     fn point_at_field_if_possible(
@@ -2238,6 +2423,27 @@ fn find_param_in_ty<'tcx>(ty: Ty<'tcx>, param_to_point_at: ty::GenericArg<'tcx>)
             // a meaningful way. So we skip it, and see improvements
             // in some UI tests.
             walk.skip_current_subtree();
+        }
+    }
+    false
+}
+
+fn find_param_def_in_ty_walker<'tcx>(
+    mut walk: TypeWalker<'tcx>,
+    param_to_point_at: &'tcx ty::GenericParamDef,
+) -> bool {
+    let param_to_point_at_param_ty = ty::ParamTy::for_def(param_to_point_at);
+    while let Some(arg) = walk.next() {
+        match arg.unpack() {
+            ty::GenericArgKind::Type(arg_ty) => match arg_ty.kind() {
+                ty::Param(arg_param_ty) => {
+                    if arg_param_ty == &param_to_point_at_param_ty {
+                        return true;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
     false
