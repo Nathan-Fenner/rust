@@ -2057,6 +2057,40 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // We only really care about the `Self` type itself, which we extract from the ref.
         let impl_self_ty: Ty<'tcx> = impl_trait_self_ref.self_ty();
 
+        let impl_predicates: ty::GenericPredicates<'tcx> =
+            self.tcx.predicates_of(obligation.impl_def_id);
+        let Some(impl_predicate_index) = obligation.impl_def_predicate_index else {
+            // We don't have the index, so we can only guess.
+            // TODO: We could conservatively assume that all generics are relevant and go from there instead...
+            return Err(expr);
+        };
+
+        if impl_predicate_index >= impl_predicates.predicates.len() {
+            // This shouldn't happen, but since this is only a diagnostic improvement, avoid breaking things.
+            return Err(expr);
+        }
+        let relevant_broken_predicate: ty::PredicateKind<'tcx> =
+            impl_predicates.predicates[impl_predicate_index].0.kind().skip_binder();
+
+        // We want to find which of the generics in the `impl_generics` are relevant to
+        // the broken obligation predicate.
+        // A generic is relevant if it is mentioned in the "original" predicate. If we can't narrow it down, treat them all as relevant.
+        // BUG: Oops, I am looking at the wrong thing here. We should find the original predicate, NOT the self type.
+        // This requires adding the impl_predicate_index to the obligation when it is created. TODO: do that.
+        let relevant_impl_generics = impl_generics.params.iter();
+
+        let relevant_impl_generics: Vec<&ty::GenericParamDef> = match relevant_broken_predicate {
+            ty::PredicateKind::Clause(ty::Clause::Trait(broken_trait)) => relevant_impl_generics
+                .filter(|&generic| {
+                    // Only retain generics that are mentioned in the (Self type) of this predicate:
+                    find_param_def_in_ty_walker(broken_trait.trait_ref.self_ty().walk(), generic)
+                })
+                .collect(),
+            _ => {
+                relevant_impl_generics.collect() // Treat all generics as potentially relevant
+            }
+        };
+
         // We can only handle Adt types for now.
         // TODO: We could support blanket impls here as well.
         // TODO: We could support tuple impls here as well.
@@ -2067,17 +2101,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         let ty::Adt(impl_self_ty_path, impl_self_ty_args) = impl_self_ty.kind() else {
             return Err(expr);
         };
-
-        // We want to find which of the generics in the `impl_generics` are relevant to
-        // the broken obligation predicate.
-        // A generic is relevant if it is mentioned in the "original" predicate.
-        // BUG: Oops, I am looking at the wrong thing here. We should find the original predicate, NOT the self type.
-        // This requires adding the impl_predicate_index to the obligation when it is created. TODO: do that.
-        let relevant_impl_generics: Vec<&ty::GenericParamDef> = impl_generics
-            .params
-            .iter()
-            .filter(|param| find_param_def_in_ty_walker(impl_self_ty.walk(), param))
-            .collect();
 
         // We need to find which of the type's arguments are relevant to this obligation.
         // For example, if we had an impl for `SomeTime<(A, C), B, Result<B, C>>` and the broken obligation
@@ -2287,7 +2310,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     // We failed to find a matching field in the original struct expression.
                     Err(expr)
                 }
-                call_ctor_func_kind => Err(expr),
+                _ => Err(expr),
             },
             _ => Err(expr),
         }

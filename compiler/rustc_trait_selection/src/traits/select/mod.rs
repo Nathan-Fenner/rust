@@ -2556,12 +2556,15 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         debug!(?predicates);
         assert_eq!(predicates.0.parent, None);
         let mut obligations = Vec::with_capacity(predicates.0.predicates.len());
-        for (predicate, span) in predicates.0.predicates {
+        for (impl_def_predicate_index, (predicate, span)) in
+            predicates.0.predicates.into_iter().enumerate()
+        {
             let span = *span;
             let cause = cause.clone().derived_cause(parent_trait_pred, |derived| {
                 ImplDerivedObligation(Box::new(ImplDerivedObligationCause {
                     derived,
                     impl_def_id: def_id,
+                    impl_def_predicate_index: Some(impl_def_predicate_index),
                     span,
                 }))
             });
@@ -2862,7 +2865,11 @@ impl<'o, 'tcx> TraitObligationStackList<'o, 'tcx> {
     }
 
     fn depth(&self) -> usize {
-        if let Some(head) = self.head { head.depth } else { 0 }
+        if let Some(head) = self.head {
+            head.depth
+        } else {
+            0
+        }
     }
 }
 
