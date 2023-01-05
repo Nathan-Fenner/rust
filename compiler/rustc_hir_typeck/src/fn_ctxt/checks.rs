@@ -525,11 +525,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // Sometimes macros mess up the spans, so do not normalize the
             // arg span to equal the error span, because that's less useful
             // than pointing out the arg expr in the wrong context.
-            if normalized_span.source_equal(error_span) {
-                span
-            } else {
-                normalized_span
-            }
+            if normalized_span.source_equal(error_span) { span } else { normalized_span }
         };
 
         // Precompute the provided types and spans, since that's all we typically need for below
@@ -782,8 +778,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // can be collated pretty easily if needed.
 
         // Next special case: if there is only one "Incompatible" error, just emit that
-        if let [Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err)))] =
-            &errors[..]
+        if let [
+            Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err))),
+        ] = &errors[..]
         {
             let (formal_ty, expected_ty) = formal_and_expected_inputs[*expected_idx];
             let (provided_ty, provided_arg_span) = provided_arg_tys[*provided_idx];
@@ -1525,21 +1522,25 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     // Our block must be a `assign desugar local; assignment`
                                     if let Some(hir::Node::Block(hir::Block {
                                         stmts:
-                                            [hir::Stmt {
-                                                kind:
-                                                    hir::StmtKind::Local(hir::Local {
-                                                        source: hir::LocalSource::AssignDesugar(_),
-                                                        ..
-                                                    }),
-                                                ..
-                                            }, hir::Stmt {
-                                                kind:
-                                                    hir::StmtKind::Expr(hir::Expr {
-                                                        kind: hir::ExprKind::Assign(..),
-                                                        ..
-                                                    }),
-                                                ..
-                                            }],
+                                            [
+                                                hir::Stmt {
+                                                    kind:
+                                                        hir::StmtKind::Local(hir::Local {
+                                                            source:
+                                                                hir::LocalSource::AssignDesugar(_),
+                                                            ..
+                                                        }),
+                                                    ..
+                                                },
+                                                hir::Stmt {
+                                                    kind:
+                                                        hir::StmtKind::Expr(hir::Expr {
+                                                            kind: hir::ExprKind::Assign(..),
+                                                            ..
+                                                        }),
+                                                    ..
+                                                },
+                                            ],
                                         ..
                                     })) = self.tcx.hir().find(blk.hir_id)
                                     {
@@ -2061,7 +2062,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             self.tcx.predicates_of(obligation.impl_def_id);
         let Some(impl_predicate_index) = obligation.impl_def_predicate_index else {
             // We don't have the index, so we can only guess.
-            // TODO: We could conservatively assume that all generics are relevant and go from there instead...
             return Err(expr);
         };
 
@@ -2075,8 +2075,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // We want to find which of the generics in the `impl_generics` are relevant to
         // the broken obligation predicate.
         // A generic is relevant if it is mentioned in the "original" predicate. If we can't narrow it down, treat them all as relevant.
-        // BUG: Oops, I am looking at the wrong thing here. We should find the original predicate, NOT the self type.
-        // This requires adding the impl_predicate_index to the obligation when it is created. TODO: do that.
         let relevant_impl_generics = impl_generics.params.iter();
 
         let relevant_impl_generics: Vec<&ty::GenericParamDef> = match relevant_broken_predicate {
@@ -2087,7 +2085,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 })
                 .collect(),
             _ => {
-                relevant_impl_generics.collect() // Treat all generics as potentially relevant
+                // Because we are missing information about which might be relevant, we assume that they all are.
+                relevant_impl_generics.collect()
             }
         };
 
@@ -2096,13 +2095,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             Tuple,
         }
 
-        // We can only handle Adt types for now.
-        // TODO: We could support blanket impls here as well.
-        // TODO: We could support tuple impls here as well.
-        // TODO: We could potentially support array/vec/slice impls here as well.
-        // TODO: We could support ref impls here as well.
         // Note that there is no point in supporting "primitive" types like char/i32,
         // since we cannot refine such a span any more anyway.
+        // Right now, only ADTs (struct/enum (variant) constructors) and tuples are supported by this refinement.
         let (impl_self_ty, impl_self_ty_args) = match impl_self_ty.kind() {
             ty::Adt(impl_self_ty_path, impl_self_ty_args) => (
                 PointableType::Adt(*impl_self_ty_path),

@@ -1,3 +1,7 @@
+// This test examines the error spans reported when a generic `impl` fails.
+// For example, if a function wants an `Option<T>` where `T: Copy` but you pass `Some(vec![1, 2])`,
+// then we want to point at the `vec![1, 2]` and not the `Some( ... )` expression.
+
 trait T1 {}
 trait T2 {}
 trait T3 {}
@@ -48,21 +52,30 @@ impl<A: T3, B: T3> T2 for (A, B) {}
 fn want<V: T1>(_x: V) {}
 
 fn example<Q>(q: Q) {
+    // In each of the following examples, we expect the error span to point at the 'q' variable,
+    // since the missing constraint is `Q: T3`.
+
+    // Verifies for struct:
     want(Wrapper { value: Burrito { spicy: false, filling: q } });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
+    // Verifies for enum with named fields in variant:
     want(Wrapper { value: BurritoKinds::SmallBurrito { spicy: true, small_filling: q } });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
+    // Verifies for tuple struct:
     want(Wrapper { value: Taco(false, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
+    // Verifies for tuple enum variant:
     want(Wrapper { value: TacoKinds::OneTaco(false, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
+    // Verifies for generic type with multiple parameters:
     want(Wrapper { value: GenericBurrito { spiciness: NotSpicy, filling: q } });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
+    // Verifies for tuple:
     want(Wrapper { value: (3, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 }
