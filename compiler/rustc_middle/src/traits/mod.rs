@@ -467,7 +467,8 @@ pub enum WellFormedLoc {
 pub struct ImplDerivedObligationCause<'tcx> {
     pub derived: DerivedObligationCause<'tcx>,
     pub impl_def_id: DefId,
-    pub impl_def_predicate_index: Option<usize>, // This is only used for diagnostics. It is the index of the predicate.
+    /// The index of the derived predicate in the parent impl's predicates.
+    pub impl_def_predicate_index: Option<usize>,
     pub span: Span,
 }
 

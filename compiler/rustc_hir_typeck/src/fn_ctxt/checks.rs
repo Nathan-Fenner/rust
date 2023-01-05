@@ -27,7 +27,6 @@ use rustc_infer::infer::TypeTrace;
 use rustc_infer::traits::PredicateObligation;
 use rustc_middle::ty::adjustment::AllowTwoPhase;
 use rustc_middle::ty::visit::TypeVisitable;
-use rustc_middle::ty::walk::TypeWalker;
 use rustc_middle::ty::{self, DefIdTree, IsSuggestable, Ty, TypeSuperVisitable, TypeVisitor};
 use rustc_session::Session;
 use rustc_span::symbol::{kw, Ident};
@@ -525,7 +524,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // Sometimes macros mess up the spans, so do not normalize the
             // arg span to equal the error span, because that's less useful
             // than pointing out the arg expr in the wrong context.
-            if normalized_span.source_equal(error_span) { span } else { normalized_span }
+            if normalized_span.source_equal(error_span) {
+                span
+            } else {
+                normalized_span
+            }
         };
 
         // Precompute the provided types and spans, since that's all we typically need for below
@@ -778,9 +781,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // can be collated pretty easily if needed.
 
         // Next special case: if there is only one "Incompatible" error, just emit that
-        if let [
-            Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err))),
-        ] = &errors[..]
+        if let [Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err)))] =
+            &errors[..]
         {
             let (formal_ty, expected_ty) = formal_and_expected_inputs[*expected_idx];
             let (provided_ty, provided_arg_span) = provided_arg_tys[*provided_idx];
@@ -1522,25 +1524,21 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     // Our block must be a `assign desugar local; assignment`
                                     if let Some(hir::Node::Block(hir::Block {
                                         stmts:
-                                            [
-                                                hir::Stmt {
-                                                    kind:
-                                                        hir::StmtKind::Local(hir::Local {
-                                                            source:
-                                                                hir::LocalSource::AssignDesugar(_),
-                                                            ..
-                                                        }),
-                                                    ..
-                                                },
-                                                hir::Stmt {
-                                                    kind:
-                                                        hir::StmtKind::Expr(hir::Expr {
-                                                            kind: hir::ExprKind::Assign(..),
-                                                            ..
-                                                        }),
-                                                    ..
-                                                },
-                                            ],
+                                            [hir::Stmt {
+                                                kind:
+                                                    hir::StmtKind::Local(hir::Local {
+                                                        source: hir::LocalSource::AssignDesugar(_),
+                                                        ..
+                                                    }),
+                                                ..
+                                            }, hir::Stmt {
+                                                kind:
+                                                    hir::StmtKind::Expr(hir::Expr {
+                                                        kind: hir::ExprKind::Assign(..),
+                                                        ..
+                                                    }),
+                                                ..
+                                            }],
                                         ..
                                     })) = self.tcx.hir().find(blk.hir_id)
                                     {
@@ -1942,7 +1940,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .inputs()
             .iter()
             .enumerate()
-            .filter(|(_, ty)| find_param_in_ty(**ty, param_to_point_at))
+            .filter(|(_, ty)| find_param_in_ty((**ty).into(), param_to_point_at))
             .collect();
         // If there's one field that references the given generic, great!
         if let [(idx, _)] = args_referencing_param.as_slice()
@@ -2081,7 +2079,10 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             ty::PredicateKind::Clause(ty::Clause::Trait(broken_trait)) => relevant_impl_generics
                 .filter(|&generic| {
                     // Only retain generics that are mentioned in the (Self type) of this predicate:
-                    find_param_def_in_ty_walker(broken_trait.trait_ref.self_ty().walk(), generic)
+                    find_param_in_ty(
+                        broken_trait.trait_ref.self_ty().into(),
+                        self.tcx.mk_param_from_def(generic),
+                    )
                 })
                 .collect(),
             _ => {
@@ -2099,14 +2100,10 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // since we cannot refine such a span any more anyway.
         // Right now, only ADTs (struct/enum (variant) constructors) and tuples are supported by this refinement.
         let (impl_self_ty, impl_self_ty_args) = match impl_self_ty.kind() {
-            ty::Adt(impl_self_ty_path, impl_self_ty_args) => (
-                PointableType::Adt(*impl_self_ty_path),
-                impl_self_ty_args.iter().collect::<Vec<_>>(),
-            ),
-            ty::Tuple(impl_self_ty_args) => (
-                PointableType::Tuple,
-                impl_self_ty_args.iter().map(|t| ty::GenericArg::from(t)).collect::<Vec<_>>(),
-            ),
+            ty::Adt(impl_self_ty_path, impl_self_ty_args) => {
+                (PointableType::Adt(*impl_self_ty_path), *impl_self_ty_args)
+            }
+            ty::Tuple(impl_self_ty_args) => (PointableType::Tuple, impl_self_ty_args.as_substs()),
             _ => {
                 return Err(expr);
             }
@@ -2122,7 +2119,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .filter(|(_index, ty_arg)| {
                 relevant_impl_generics
                     .iter()
-                    .any(|param| find_param_def_in_ty_walker(ty_arg.walk(), param))
+                    .any(|param| find_param_in_ty(*ty_arg, self.tcx.mk_param_from_def(param)))
             })
             .map(|(index, _ty_arg)| index)
             .collect();
@@ -2211,9 +2208,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         let field_type: Ty<'tcx> = self.tcx.type_of(field_def.did);
 
                         // Only retain fields which mention the blameable generics.
-                        struct_def_generics
-                            .iter()
-                            .any(|param| find_param_def_in_ty_walker(field_type.walk(), param))
+                        struct_def_generics.iter().any(|param| {
+                            find_param_in_ty(field_type.into(), self.tcx.mk_param_from_def(param))
+                        })
                     })
                     .collect();
 
@@ -2224,7 +2221,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
                 let blameable_field_def: &ty::FieldDef = blameable_field_defs[0];
 
-                for field in struct_fields.iter() {
+                for field in struct_fields {
                     if field.ident.as_str() == blameable_field_def.ident(self.tcx).as_str() {
                         // Blame this field!
                         return Ok(field.expr);
@@ -2277,7 +2274,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             .variants()
                             .iter()
                             .find(|variant: &&ty::VariantDef| -> bool {
-                                variant.ctor.map(|ctor| ctor.1 == *ctor_def_id).unwrap_or(false)
+                                variant.ctor.map_or(false, |ctor| ctor.1 == *ctor_def_id)
                             });
 
                         let Some(struct_variant_def) = struct_variant_def else {
@@ -2295,17 +2292,23 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         .collect();
 
                     // The struct being constructed is the same as the struct in the impl.
+                    // Because it's a tuple-struct-like expression, we only care about the index
+                    // (the fields don't have real names).
 
-                    let blameable_field_defs: Vec<&ty::FieldDef> = struct_variant_def
+                    let blameable_field_defs: Vec<(usize, &ty::FieldDef)> = struct_variant_def
                         .fields
                         .iter()
-                        .filter(|field_def| {
+                        .enumerate()
+                        .filter(|(_index, field_def)| {
                             let field_type: Ty<'tcx> = self.tcx.type_of(field_def.did);
 
                             // Only retain fields which mention the blameable generics.
-                            struct_def_generics
-                                .iter()
-                                .any(|param| find_param_def_in_ty_walker(field_type.walk(), param))
+                            struct_def_generics.iter().any(|param| {
+                                find_param_in_ty(
+                                    field_type.into(),
+                                    self.tcx.mk_param_from_def(param),
+                                )
+                            })
                         })
                         .collect();
 
@@ -2314,12 +2317,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         return Err(expr);
                     }
 
-                    let blameable_field_def: &ty::FieldDef = blameable_field_defs[0];
-                    let blameable_field_index = struct_variant_def
-                        .fields
-                        .iter()
-                        .position(|field_def| field_def == blameable_field_def)
-                        .expect("exists in list");
+                    let (blameable_field_index, _) = blameable_field_defs[0];
 
                     if blameable_field_index < call_ctor_args.len() {
                         return Ok(&call_ctor_args[blameable_field_index]);
@@ -2394,7 +2392,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .iter()
             .filter(|field| {
                 let field_ty = field.ty(self.tcx, identity_substs);
-                find_param_in_ty(field_ty, param_to_point_at)
+                find_param_in_ty(field_ty.into(), param_to_point_at)
             })
             .collect();
 
@@ -2636,7 +2634,12 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     }
 }
 
-fn find_param_in_ty<'tcx>(ty: Ty<'tcx>, param_to_point_at: ty::GenericArg<'tcx>) -> bool {
+/// Traverses the given ty (either a `ty::Ty` or a `ty::GenericArg`) and searches for references
+/// to the given `param_to_point_at`. Returns `true` if it finds any use of the param.
+fn find_param_in_ty<'tcx>(
+    ty: ty::GenericArg<'tcx>,
+    param_to_point_at: ty::GenericArg<'tcx>,
+) -> bool {
     let mut walk = ty.walk();
     while let Some(arg) = walk.next() {
         if arg == param_to_point_at {
@@ -2651,27 +2654,6 @@ fn find_param_in_ty<'tcx>(ty: Ty<'tcx>, param_to_point_at: ty::GenericArg<'tcx>)
             // a meaningful way. So we skip it, and see improvements
             // in some UI tests.
             walk.skip_current_subtree();
-        }
-    }
-    false
-}
-
-fn find_param_def_in_ty_walker<'tcx>(
-    mut walk: TypeWalker<'tcx>,
-    param_to_point_at: &'tcx ty::GenericParamDef,
-) -> bool {
-    let param_to_point_at_param_ty = ty::ParamTy::for_def(param_to_point_at);
-    while let Some(arg) = walk.next() {
-        match arg.unpack() {
-            ty::GenericArgKind::Type(arg_ty) => match arg_ty.kind() {
-                ty::Param(arg_param_ty) => {
-                    if arg_param_ty == &param_to_point_at_param_ty {
-                        return true;
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
         }
     }
     false
