@@ -51,6 +51,19 @@ impl<A: T3, B: T3> T2 for (A, B) {}
 
 fn want<V: T1>(_x: V) {}
 
+// Some more-complex examples:
+type AliasBurrito<T> = GenericBurrito<T, T>;
+
+// The following example is fairly confusing. The idea is that we want to "misdirect" the location
+// of the error.
+
+struct Two<A, B> {
+    a: A,
+    b: B,
+}
+
+impl<X, Y: T1, Z> T1 for Two<Two<X, Y>, Z> {}
+
 fn example<Q>(q: Q) {
     // In each of the following examples, we expect the error span to point at the 'q' variable,
     // since the missing constraint is `Q: T3`.
@@ -78,6 +91,20 @@ fn example<Q>(q: Q) {
     // Verifies for tuple:
     want(Wrapper { value: (3, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    // Verifies for type alias to struct:
+    want(Wrapper { value: AliasBurrito { spiciness: q, filling: q } });
+    //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    want(Two { a: Two { a: (), b: q }, b: () });
+    //~^ ERROR the trait bound `Q: T1` is not satisfied [E0277]
+
+    // We *should* blame the 'q'.
+    // FIXME: Right now, the wrong field is blamed.
+    want(
+        Two { a: Two { a: (), b: Two { a: Two { a: (), b: q }, b: () } }, b: () },
+        //~^ ERROR the trait bound `Q: T1` is not satisfied [E0277]
+    );
 }
 
 fn main() {}

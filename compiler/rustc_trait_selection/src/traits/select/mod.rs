@@ -2556,9 +2556,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         debug!(?predicates);
         assert_eq!(predicates.0.parent, None);
         let mut obligations = Vec::with_capacity(predicates.0.predicates.len());
-        for (index, (predicate, span)) in
-            predicates.0.predicates.into_iter().enumerate()
-        {
+        for (index, (predicate, span)) in predicates.0.predicates.into_iter().enumerate() {
             let span = *span;
             let cause = cause.clone().derived_cause(parent_trait_pred, |derived| {
                 ImplDerivedObligation(Box::new(ImplDerivedObligationCause {

@@ -524,11 +524,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // Sometimes macros mess up the spans, so do not normalize the
             // arg span to equal the error span, because that's less useful
             // than pointing out the arg expr in the wrong context.
-            if normalized_span.source_equal(error_span) {
-                span
-            } else {
-                normalized_span
-            }
+            if normalized_span.source_equal(error_span) { span } else { normalized_span }
         };
 
         // Precompute the provided types and spans, since that's all we typically need for below
@@ -781,8 +777,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // can be collated pretty easily if needed.
 
         // Next special case: if there is only one "Incompatible" error, just emit that
-        if let [Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err)))] =
-            &errors[..]
+        if let [
+            Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err))),
+        ] = &errors[..]
         {
             let (formal_ty, expected_ty) = formal_and_expected_inputs[*expected_idx];
             let (provided_ty, provided_arg_span) = provided_arg_tys[*provided_idx];
@@ -1524,21 +1521,25 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     // Our block must be a `assign desugar local; assignment`
                                     if let Some(hir::Node::Block(hir::Block {
                                         stmts:
-                                            [hir::Stmt {
-                                                kind:
-                                                    hir::StmtKind::Local(hir::Local {
-                                                        source: hir::LocalSource::AssignDesugar(_),
-                                                        ..
-                                                    }),
-                                                ..
-                                            }, hir::Stmt {
-                                                kind:
-                                                    hir::StmtKind::Expr(hir::Expr {
-                                                        kind: hir::ExprKind::Assign(..),
-                                                        ..
-                                                    }),
-                                                ..
-                                            }],
+                                            [
+                                                hir::Stmt {
+                                                    kind:
+                                                        hir::StmtKind::Local(hir::Local {
+                                                            source:
+                                                                hir::LocalSource::AssignDesugar(_),
+                                                            ..
+                                                        }),
+                                                    ..
+                                                },
+                                                hir::Stmt {
+                                                    kind:
+                                                        hir::StmtKind::Expr(hir::Expr {
+                                                            kind: hir::ExprKind::Assign(..),
+                                                            ..
+                                                        }),
+                                                    ..
+                                                },
+                                            ],
                                         ..
                                     })) = self.tcx.hir().find(blk.hir_id)
                                     {
@@ -2129,13 +2130,15 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // field which can be "blamed" for the missing trait, so that it can be highlighted.
         match expr.kind {
             hir::ExprKind::Struct(
-                hir::QPath::Resolved(
-                    _,
-                    hir::Path { res: hir::def::Res::Def(struct_def_kind, struct_def_id), .. },
-                ),
+                struct_path,
                 struct_fields,
                 _, // NOTE: "Rest" fields in structs are currently ignored by this function.
             ) => {
+                // FIXME: No attempt is currently made to resolve type aliases.
+                let Res::Def(struct_def_kind, struct_def_id) = self.typeck_results.borrow().qpath_res(struct_path, expr.hir_id) else {
+                    return Err(expr);
+                };
+
                 let PointableType::Adt(impl_self_ty_path) = impl_self_ty else {
                     // An Adt expression requires an Adt type and vice-versa.
                     return Err(expr);
@@ -2144,7 +2147,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 let (struct_variant_def, struct_def_generics): (&ty::VariantDef, &ty::Generics) =
                     match struct_def_kind {
                         hir::def::DefKind::Struct => {
-                            if &impl_self_ty_path.did() != struct_def_id {
+                            if impl_self_ty_path.did() != struct_def_id {
                                 // If the struct is not the same as `Self`, we cannot refine.
                                 return Err(expr);
                             }
@@ -2164,7 +2167,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             (struct_variant_defs[0], struct_def_generics)
                         }
                         hir::def::DefKind::Variant => {
-                            let variant_def_id = *struct_def_id;
+                            let variant_def_id = struct_def_id;
                             let struct_def_id = self.tcx.parent(variant_def_id);
 
                             if impl_self_ty_path.did() != struct_def_id {
