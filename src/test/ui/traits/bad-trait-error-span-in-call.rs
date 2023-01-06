@@ -48,6 +48,7 @@ impl<X, Y: T3> T2 for GenericBurrito<X, Y> {}
 struct NotSpicy;
 
 impl<A: T3, B: T3> T2 for (A, B) {}
+impl<A: T2, B: T2> T1 for (A, B) {}
 
 fn want<V: T1>(_x: V) {}
 
@@ -63,6 +64,12 @@ struct Two<A, B> {
 }
 
 impl<X, Y: T1, Z> T1 for Two<Two<X, Y>, Z> {}
+
+struct DoubleWrapper<T> {
+    item: Wrapper<T>,
+}
+
+impl<T: T1> T1 for DoubleWrapper<T> {}
 
 fn example<Q>(q: Q) {
     // In each of the following examples, we expect the error span to point at the 'q' variable,
@@ -89,8 +96,22 @@ fn example<Q>(q: Q) {
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
 
     // Verifies for tuple:
+    want((3, q));
+    //~^ ERROR the trait bound `Q: T2` is not satisfied [E0277]
+
+    // Verifies for nested tuple:
     want(Wrapper { value: (3, q) });
     //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    // Verifies for nested tuple:
+    want(((3, q), 5));
+    //~^ ERROR the trait bound `Q: T3` is not satisfied [E0277]
+
+    want(DoubleWrapper { item: Wrapper { value: q } });
+    //~^ ERROR the trait bound `Q: T1` is not satisfied [E0277]
+
+    want(DoubleWrapper { item: Wrapper { value: DoubleWrapper { item: Wrapper { value: q } } } });
+    //~^ ERROR the trait bound `Q: T1` is not satisfied [E0277]
 
     // Verifies for type alias to struct:
     want(Wrapper { value: AliasBurrito { spiciness: q, filling: q } });

@@ -9,7 +9,6 @@ use crate::{
     TupleArgumentsFlag,
 };
 use rustc_ast as ast;
-use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::{pluralize, Applicability, Diagnostic, DiagnosticId, MultiSpan};
 use rustc_hir as hir;
 use rustc_hir::def::{CtorOf, DefKind, Res};
@@ -24,7 +23,6 @@ use rustc_infer::infer::error_reporting::{FailureCode, ObligationCauseExt};
 use rustc_infer::infer::type_variable::{TypeVariableOrigin, TypeVariableOriginKind};
 use rustc_infer::infer::InferOk;
 use rustc_infer::infer::TypeTrace;
-use rustc_infer::traits::PredicateObligation;
 use rustc_middle::ty::adjustment::AllowTwoPhase;
 use rustc_middle::ty::visit::TypeVisitable;
 use rustc_middle::ty::{self, DefIdTree, IsSuggestable, Ty, TypeSuperVisitable, TypeVisitor};
@@ -35,8 +33,11 @@ use rustc_trait_selection::traits::{self, ObligationCauseCode, SelectionContext}
 
 use std::iter;
 use std::mem;
-use std::ops::ControlFlow;
 use std::slice;
+
+use rustc_data_structures::fx::FxHashSet;
+
+use std::ops::ControlFlow;
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     pub(in super::super) fn check_casts(&mut self) {
@@ -524,7 +525,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // Sometimes macros mess up the spans, so do not normalize the
             // arg span to equal the error span, because that's less useful
             // than pointing out the arg expr in the wrong context.
-            if normalized_span.source_equal(error_span) { span } else { normalized_span }
+            if normalized_span.source_equal(error_span) {
+                span
+            } else {
+                normalized_span
+            }
         };
 
         // Precompute the provided types and spans, since that's all we typically need for below
@@ -777,9 +782,8 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // can be collated pretty easily if needed.
 
         // Next special case: if there is only one "Incompatible" error, just emit that
-        if let [
-            Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err))),
-        ] = &errors[..]
+        if let [Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err)))] =
+            &errors[..]
         {
             let (formal_ty, expected_ty) = formal_and_expected_inputs[*expected_idx];
             let (provided_ty, provided_arg_span) = provided_arg_tys[*provided_idx];
@@ -1521,25 +1525,21 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     // Our block must be a `assign desugar local; assignment`
                                     if let Some(hir::Node::Block(hir::Block {
                                         stmts:
-                                            [
-                                                hir::Stmt {
-                                                    kind:
-                                                        hir::StmtKind::Local(hir::Local {
-                                                            source:
-                                                                hir::LocalSource::AssignDesugar(_),
-                                                            ..
-                                                        }),
-                                                    ..
-                                                },
-                                                hir::Stmt {
-                                                    kind:
-                                                        hir::StmtKind::Expr(hir::Expr {
-                                                            kind: hir::ExprKind::Assign(..),
-                                                            ..
-                                                        }),
-                                                    ..
-                                                },
-                                            ],
+                                            [hir::Stmt {
+                                                kind:
+                                                    hir::StmtKind::Local(hir::Local {
+                                                        source: hir::LocalSource::AssignDesugar(_),
+                                                        ..
+                                                    }),
+                                                ..
+                                            }, hir::Stmt {
+                                                kind:
+                                                    hir::StmtKind::Expr(hir::Expr {
+                                                        kind: hir::ExprKind::Assign(..),
+                                                        ..
+                                                    }),
+                                                ..
+                                            }],
                                         ..
                                     })) = self.tcx.hir().find(blk.hir_id)
                                     {
@@ -1825,7 +1825,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         .into_iter()
                         .flatten()
                     {
-                        if self.point_at_arg_if_possible(
+                        if self.blame_specific_arg_if_possible(
                                 error,
                                 def_id,
                                 param,
@@ -1855,7 +1855,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     .into_iter()
                     .flatten()
                 {
-                    if self.point_at_arg_if_possible(
+                    if self.blame_specific_arg_if_possible(
                         error,
                         def_id,
                         param,
@@ -1880,16 +1880,24 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     for param in
                         [param_to_point_at, fallback_param_to_point_at, self_param_to_point_at]
                     {
-                        if let Some(param) = param
-                            && self.point_at_field_if_possible(
-                                error,
+                        if let Some(param) = param {
+                            let refined_expr = self.point_at_field_if_possible(
                                 def_id,
                                 param,
                                 variant_def_id,
                                 fields,
-                            )
-                        {
-                            return true;
+                            );
+
+                            match refined_expr {
+                                None => {}
+                                Some((refined_expr, _)) => {
+                                    error.obligation.cause.span = refined_expr
+                                        .span
+                                        .find_ancestor_in_same_ctxt(error.obligation.cause.span)
+                                        .unwrap_or(refined_expr.span);
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1922,7 +1930,16 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    fn point_at_arg_if_possible(
+    /// - `blame_specific_*` means that the function will recursively traverse the expression,
+    /// looking for the most-specific-possible span to blame.
+    ///
+    /// - `point_at_*` means that the function will only go "one level", pointing at the specific
+    /// expression mentioned.
+    ///
+    /// `blame_specific_arg_if_possible` will find the most-specific expression anywhere inside
+    /// the provided function call expression, and mark it as responsible for the fullfillment
+    /// error.
+    fn blame_specific_arg_if_possible(
         &self,
         error: &mut traits::FulfillmentError<'tcx>,
         def_id: DefId,
@@ -1941,7 +1958,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .inputs()
             .iter()
             .enumerate()
-            .filter(|(_, ty)| find_param_in_ty((**ty).into(), param_to_point_at))
+            .filter(|(_, ty)| Self::find_param_in_ty((**ty).into(), param_to_point_at))
             .collect();
         // If there's one field that references the given generic, great!
         if let [(idx, _)] = args_referencing_param.as_slice()
@@ -1952,7 +1969,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
             if let hir::Node::Expr(arg_expr) = self.tcx.hir().get(arg.hir_id) {
                 // This is more specific than pointing at the entire argument.
-                self.point_at_specific_expr_if_possible(error, arg_expr)
+                self.blame_specific_expr_if_possible(error, arg_expr)
             }
 
             error.obligation.cause.map_code(|parent_code| {
@@ -1972,420 +1989,14 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         false
     }
 
-    fn point_at_specific_expr_if_possible_for_obligation_cause_code(
+    // FIXME: Make this private and move to mod adjust_fulfillment_errors
+    pub fn point_at_field_if_possible(
         &self,
-        obligation_cause_code: &traits::ObligationCauseCode<'tcx>,
-        expr: &'tcx hir::Expr<'tcx>,
-    ) -> Result<&'tcx hir::Expr<'tcx>, &'tcx hir::Expr<'tcx>> {
-        match obligation_cause_code {
-            traits::ObligationCauseCode::ImplDerivedObligation(impl_derived) => self
-                .point_at_specific_expr_if_possible_for_derived_predicate_obligation(
-                    impl_derived,
-                    expr,
-                ),
-            traits::ObligationCauseCode::ExprBindingObligation(_, _, _, _) => Ok(expr),
-            _ => {
-                // Err(expr) indicates that we cannot process any further.
-                Err(expr)
-            }
-        }
-    }
-
-    /// We want to achieve the error span in the following example:
-    ///
-    /// ```
-    /// struct Burrito<Filling> {
-    ///   filling: Filling,
-    /// }
-    /// impl <Filling: Delicious> Delicious for Burrito<Filling> {}
-    /// fn eat_delicious_food<Food: Delicious>(food: Food) {}
-    ///
-    /// fn will_type_error() {
-    ///   eat_delicious_food(Burrito { filling: Kale });
-    /// } //                                    ^--- The trait bound `Kale: Delicious` is not satisfied
-    /// ```
-    ///
-    /// Without calling this function, the error span will cover the entire `Burrito { ... }` expression.
-    ///
-    /// The strategy to determine this span involves connecting information about our generic `impl`
-    /// with information about our (struct) type and the (struct) literal expression:
-    /// - Find the `impl` (`impl <Filling: Delicious> Delicious for Burrito<Filling>`)
-    ///   that links our obligation (`Kale: Delicious`) with the parent obligation (`Burrito<Kale>: Delicious`)
-    /// - Find the "original" predicate constraint in the impl (`Filling: Delicious`) which produced our obligation.
-    /// - Find all of the generics that are mentioned in the predicate (`Filling`).
-    /// - Examine the `Self` type in the `impl`, and see which of its type argument(s) mention any of those generics.
-    /// - Examing the definition for the `Self` type, and identify (for each of its variants) if there's a unique field
-    ///   which uses those generic arguments.
-    /// - If there is a unique field mentioning the "blameable" arguments, use that field for the error span.
-    ///
-    /// Before we do any of this logic, we recursively call `point_at_specific_expr_if_possible` on the parent
-    /// obligation. Hence we refine the `expr` "outwards-in" and bail at the first kind of expression/impl we don't recognize.
-    ///
-    /// This function returns a `Result<&Expr, &Expr>` - either way, it returns the `Expr` whose span should be
-    /// reported as an error. If it is `Ok`, then it means it refined successfull. If it is `Err`, then it may be
-    /// only a partial success - but it cannot be refined even further.
-    ///
-    /// `point_at_specific_expr_if_possible` will ultimately return the returned `Expr` whether it is `Ok` or `Err`;
-    /// this error state is only used for propagation within these recursive functions.
-    fn point_at_specific_expr_if_possible_for_derived_predicate_obligation(
-        &self,
-        obligation: &traits::ImplDerivedObligationCause<'tcx>,
-        expr: &'tcx hir::Expr<'tcx>,
-    ) -> Result<&'tcx hir::Expr<'tcx>, &'tcx hir::Expr<'tcx>> {
-        // First, we attempt to refine the `expr` for our span using the parent obligation.
-        // If this cannot be done, then we are already stuck, so we stop early (hence the use
-        // of the `?` try operator here).
-        let expr = self.point_at_specific_expr_if_possible_for_obligation_cause_code(
-            &*obligation.derived.parent_code,
-            expr,
-        )?;
-
-        // These are the generic parameters used by the `impl` that produced our current obligation.
-        let impl_generics: &ty::Generics = self.tcx.generics_of(obligation.impl_def_id);
-
-        // This is the "trait" (meaning, the predicate "proved" by this `impl`) which provides the `Self` type we care about.
-        // For the purposes of this function, we hope that it is a `struct` type, and that our current `expr` is a literal of
-        // that struct type.
-        let impl_trait_self_ref: Option<ty::TraitRef<'tcx>> =
-            self.tcx.impl_trait_ref(obligation.impl_def_id);
-
-        let Some(impl_trait_self_ref) = impl_trait_self_ref else {
-            // It is possible that this is absent. In this case, we make no progress.
-            return Err(expr);
-        };
-
-        // We only really care about the `Self` type itself, which we extract from the ref.
-        let impl_self_ty: Ty<'tcx> = impl_trait_self_ref.self_ty();
-
-        let impl_predicates: ty::GenericPredicates<'tcx> =
-            self.tcx.predicates_of(obligation.impl_def_id);
-        let Some(impl_predicate_index) = obligation.impl_def_predicate_index else {
-            // We don't have the index, so we can only guess.
-            return Err(expr);
-        };
-
-        if impl_predicate_index >= impl_predicates.predicates.len() {
-            // This shouldn't happen, but since this is only a diagnostic improvement, avoid breaking things.
-            return Err(expr);
-        }
-        let relevant_broken_predicate: ty::PredicateKind<'tcx> =
-            impl_predicates.predicates[impl_predicate_index].0.kind().skip_binder();
-
-        // We want to find which of the generics in the `impl_generics` are relevant to
-        // the broken obligation predicate.
-        // A generic is relevant if it is mentioned in the "original" predicate. If we can't narrow it down, treat them all as relevant.
-        let relevant_impl_generics = impl_generics.params.iter();
-
-        let relevant_impl_generics: Vec<&ty::GenericParamDef> = match relevant_broken_predicate {
-            ty::PredicateKind::Clause(ty::Clause::Trait(broken_trait)) => relevant_impl_generics
-                .filter(|&generic| {
-                    // Only retain generics that are mentioned in the (Self type) of this predicate:
-                    find_param_in_ty(
-                        broken_trait.trait_ref.self_ty().into(),
-                        self.tcx.mk_param_from_def(generic),
-                    )
-                })
-                .collect(),
-            _ => {
-                // Because we are missing information about which might be relevant, we assume that they all are.
-                relevant_impl_generics.collect()
-            }
-        };
-
-        enum PointableType<'tcx> {
-            Adt(ty::AdtDef<'tcx>),
-            Tuple,
-        }
-
-        // Note that there is no point in supporting "primitive" types like char/i32,
-        // since we cannot refine such a span any more anyway.
-        // Right now, only ADTs (struct/enum (variant) constructors) and tuples are supported by this refinement.
-        let (impl_self_ty, impl_self_ty_args) = match impl_self_ty.kind() {
-            ty::Adt(impl_self_ty_path, impl_self_ty_args) => {
-                (PointableType::Adt(*impl_self_ty_path), *impl_self_ty_args)
-            }
-            ty::Tuple(impl_self_ty_args) => (PointableType::Tuple, impl_self_ty_args.as_substs()),
-            _ => {
-                return Err(expr);
-            }
-        };
-
-        // We need to find which of the type's arguments are relevant to this obligation.
-        // For example, if we had an impl for `SomeTime<(A, C), B, Result<B, C>>` and the broken obligation
-        // was `B: Display` then we'd care about indexes `vec![1, 2]`, but if it was `C: PartialEq` then we'd
-        // care about index `vec![0, 2]`.
-        let relevant_ty_args_indices: Vec<usize> = impl_self_ty_args
-            .into_iter()
-            .enumerate()
-            .filter(|(_index, ty_arg)| {
-                relevant_impl_generics
-                    .iter()
-                    .any(|param| find_param_in_ty(*ty_arg, self.tcx.mk_param_from_def(param)))
-            })
-            .map(|(index, _ty_arg)| index)
-            .collect();
-
-        // Different expression require different treatment. In general, we hope that we have a literal
-        // expression which produces the current `Self` type. Moreoever, we hope that it has a single
-        // field which can be "blamed" for the missing trait, so that it can be highlighted.
-        match expr.kind {
-            hir::ExprKind::Struct(
-                struct_path,
-                struct_fields,
-                _, // NOTE: "Rest" fields in structs are currently ignored by this function.
-            ) => {
-                // FIXME: No attempt is currently made to resolve type aliases.
-                let Res::Def(struct_def_kind, struct_def_id) = self.typeck_results.borrow().qpath_res(struct_path, expr.hir_id) else {
-                    return Err(expr);
-                };
-
-                let PointableType::Adt(impl_self_ty_path) = impl_self_ty else {
-                    // An Adt expression requires an Adt type and vice-versa.
-                    return Err(expr);
-                };
-                // We can directly support `Variant` and `Struct` struct expressions:
-                let (struct_variant_def, struct_def_generics): (&ty::VariantDef, &ty::Generics) =
-                    match struct_def_kind {
-                        hir::def::DefKind::Struct => {
-                            if impl_self_ty_path.did() != struct_def_id {
-                                // If the struct is not the same as `Self`, we cannot refine.
-                                return Err(expr);
-                            }
-
-                            let struct_def_generics: &ty::Generics =
-                                self.tcx.generics_of(struct_def_id);
-
-                            let struct_variant_defs: Vec<&ty::VariantDef> =
-                                impl_self_ty_path.variants().iter().collect::<Vec<_>>();
-
-                            if struct_variant_defs.len() != 1 {
-                                // We expect exactly one variant to exist, since it's a struct type.
-                                return Err(expr);
-                            }
-
-                            // Use the sole variant definition as our variant from now on:
-                            (struct_variant_defs[0], struct_def_generics)
-                        }
-                        hir::def::DefKind::Variant => {
-                            let variant_def_id = struct_def_id;
-                            let struct_def_id = self.tcx.parent(variant_def_id);
-
-                            if impl_self_ty_path.did() != struct_def_id {
-                                // If the struct is not the same as `Self`, we cannot refine.
-                                return Err(expr);
-                            }
-
-                            let struct_def_generics: &ty::Generics =
-                                self.tcx.generics_of(struct_def_id);
-
-                            let struct_variant_def: Option<&ty::VariantDef> = impl_self_ty_path
-                                .variants()
-                                .iter()
-                                .find(|variant: &&ty::VariantDef| variant.def_id == variant_def_id);
-
-                            let Some(struct_variant_def) = struct_variant_def else {
-                                // Failed to find matching variant.
-                                return Err(expr);
-                            };
-
-                            // Use the sole variant definition as our variant from now on:
-                            (struct_variant_def, struct_def_generics)
-                        }
-                        _ => {
-                            return Err(expr);
-                        }
-                    };
-
-                // Only retain the generics which are relevant (according to the `impl`).
-                let struct_def_generics: Vec<&ty::GenericParamDef> = relevant_ty_args_indices
-                    .into_iter()
-                    .filter_map(|index| struct_def_generics.params.get(index))
-                    .collect();
-
-                // The struct being constructed is the same as the struct in the impl.
-
-                let blameable_field_defs: Vec<&ty::FieldDef> = struct_variant_def
-                    .fields
-                    .iter()
-                    .filter(|field_def| {
-                        let field_type: Ty<'tcx> = self.tcx.type_of(field_def.did);
-
-                        // Only retain fields which mention the blameable generics.
-                        struct_def_generics.iter().any(|param| {
-                            find_param_in_ty(field_type.into(), self.tcx.mk_param_from_def(param))
-                        })
-                    })
-                    .collect();
-
-                if blameable_field_defs.len() != 1 {
-                    // We must have a single blameable field, in order to be able to blame it.
-                    return Err(expr);
-                }
-
-                let blameable_field_def: &ty::FieldDef = blameable_field_defs[0];
-
-                for field in struct_fields {
-                    if field.ident.as_str() == blameable_field_def.ident(self.tcx).as_str() {
-                        // Blame this field!
-                        return Ok(field.expr);
-                    }
-                }
-
-                // We failed to find a matching field in the original struct expression.
-                Err(expr)
-            }
-            hir::ExprKind::Call(call_ctor_func, call_ctor_args) => match &call_ctor_func.kind {
-                hir::ExprKind::Path(hir::QPath::Resolved(
-                    _,
-                    hir::Path {
-                        res:
-                            hir::def::Res::Def(
-                                hir::def::DefKind::Ctor(_ctor_of, hir::def::CtorKind::Fn),
-                                ctor_def_id,
-                            ),
-                        ..
-                    },
-                )) => {
-                    let PointableType::Adt(impl_self_ty_path) = impl_self_ty else {
-                        // An Adt expression requires an Adt type and vice-versa.
-                        return Err(expr);
-                    };
-
-                    let (struct_variant_def, struct_def_generics) = {
-                        let mut struct_def_id = self.tcx.parent(*ctor_def_id);
-                        if impl_self_ty_path.did() != struct_def_id {
-                            // Why do we try this twice?
-                            //
-                            // If we're looking at a struct tuple constructor, we'll get the ctor.
-                            // And the ctor's parent is the struct itself.
-                            //
-                            // However, if we're looking at an enum ctor, its parent is the enum variant,
-                            // whose parent is the enum itself.
-                            //
-                            // So the simplest fix is to try both `.parent()` and `.parent().parent()`.
-                            struct_def_id = self.tcx.parent(struct_def_id);
-                        }
-                        if impl_self_ty_path.did() != struct_def_id {
-                            // If the struct is not the same as `Self`, we cannot refine.
-                            return Err(expr);
-                        }
-
-                        let struct_def_generics: &ty::Generics =
-                            self.tcx.generics_of(struct_def_id);
-
-                        let struct_variant_def: Option<&ty::VariantDef> = impl_self_ty_path
-                            .variants()
-                            .iter()
-                            .find(|variant: &&ty::VariantDef| -> bool {
-                                variant.ctor.map_or(false, |ctor| ctor.1 == *ctor_def_id)
-                            });
-
-                        let Some(struct_variant_def) = struct_variant_def else {
-                            return Err(expr);
-                        };
-
-                        // Use the sole variant definition as our variant from now on:
-                        (struct_variant_def, struct_def_generics)
-                    };
-
-                    // Only retain the generics which are relevant (according to the `impl`).
-                    let struct_def_generics: Vec<&ty::GenericParamDef> = relevant_ty_args_indices
-                        .into_iter()
-                        .filter_map(|index| struct_def_generics.params.get(index))
-                        .collect();
-
-                    // The struct being constructed is the same as the struct in the impl.
-                    // Because it's a tuple-struct-like expression, we only care about the index
-                    // (the fields don't have real names).
-
-                    let blameable_field_defs: Vec<(usize, &ty::FieldDef)> = struct_variant_def
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .filter(|(_index, field_def)| {
-                            let field_type: Ty<'tcx> = self.tcx.type_of(field_def.did);
-
-                            // Only retain fields which mention the blameable generics.
-                            struct_def_generics.iter().any(|param| {
-                                find_param_in_ty(
-                                    field_type.into(),
-                                    self.tcx.mk_param_from_def(param),
-                                )
-                            })
-                        })
-                        .collect();
-
-                    if blameable_field_defs.len() != 1 {
-                        // We must have a single blameable field, in order to be able to blame it.
-                        return Err(expr);
-                    }
-
-                    let (blameable_field_index, _) = blameable_field_defs[0];
-
-                    if blameable_field_index < call_ctor_args.len() {
-                        return Ok(&call_ctor_args[blameable_field_index]);
-                    }
-
-                    // We failed to find a matching field in the original struct expression.
-                    Err(expr)
-                }
-                _ => Err(expr),
-            },
-            hir::ExprKind::Tup(elements) => {
-                if let &[single_index] = relevant_ty_args_indices.as_slice() {
-                    if single_index < elements.len() {
-                        return Ok(&elements[single_index]);
-                    }
-                }
-                return Err(expr);
-            }
-            _ => Err(expr),
-        }
-    }
-
-    fn point_at_specific_expr_if_possible_for_predicate_obligation(
-        &self,
-        obligation: &PredicateObligation<'tcx>,
-        expr: &'tcx hir::Expr<'tcx>,
-    ) -> Result<&'tcx hir::Expr<'tcx>, &'tcx hir::Expr<'tcx>> {
-        self.point_at_specific_expr_if_possible_for_obligation_cause_code(
-            obligation.cause.code(),
-            expr,
-        )
-    }
-
-    /**
-     * Recursively searches for the most-specific blamable expression.
-     * Specifically, looks for constructor expressions, e.g. `(false, 5)` constructs a tuple
-     * or `Some(5)` constructs an `Option<i32>` and pairs them with their derived impl predicates.
-     */
-    fn point_at_specific_expr_if_possible(
-        &self,
-        error: &mut traits::FulfillmentError<'tcx>,
-        expr: &'tcx hir::Expr<'tcx>,
-    ) {
-        let expr = match self
-            .point_at_specific_expr_if_possible_for_predicate_obligation(&error.obligation, expr)
-        {
-            Ok(expr) => expr,
-            Err(expr) => expr,
-        };
-
-        // update the error span.
-        error.obligation.cause.span = expr
-            .span
-            .find_ancestor_in_same_ctxt(error.obligation.cause.span)
-            .unwrap_or(error.obligation.cause.span);
-    }
-
-    fn point_at_field_if_possible(
-        &self,
-        error: &mut traits::FulfillmentError<'tcx>,
         def_id: DefId,
         param_to_point_at: ty::GenericArg<'tcx>,
         variant_def_id: DefId,
         expr_fields: &[hir::ExprField<'tcx>],
-    ) -> bool {
+    ) -> Option<(&'tcx hir::Expr<'tcx>, Ty<'tcx>)> {
         let def = self.tcx.adt_def(def_id);
 
         let identity_substs = ty::InternalSubsts::identity_for_item(self.tcx, def_id);
@@ -2395,7 +2006,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .iter()
             .filter(|field| {
                 let field_ty = field.ty(self.tcx, identity_substs);
-                find_param_in_ty(field_ty.into(), param_to_point_at)
+                Self::find_param_in_ty(field_ty.into(), param_to_point_at)
             })
             .collect();
 
@@ -2405,17 +2016,12 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 // same rules that check_expr_struct uses for macro hygiene.
                 if self.tcx.adjust_ident(expr_field.ident, variant_def_id) == field.ident(self.tcx)
                 {
-                    error.obligation.cause.span = expr_field
-                        .expr
-                        .span
-                        .find_ancestor_in_same_ctxt(error.obligation.cause.span)
-                        .unwrap_or(expr_field.span);
-                    return true;
+                    return Some((expr_field.expr, self.tcx.type_of(field.did)));
                 }
             }
         }
 
-        false
+        None
     }
 
     fn point_at_path_if_possible(
@@ -2635,29 +2241,4 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             );
         }
     }
-}
-
-/// Traverses the given ty (either a `ty::Ty` or a `ty::GenericArg`) and searches for references
-/// to the given `param_to_point_at`. Returns `true` if it finds any use of the param.
-fn find_param_in_ty<'tcx>(
-    ty: ty::GenericArg<'tcx>,
-    param_to_point_at: ty::GenericArg<'tcx>,
-) -> bool {
-    let mut walk = ty.walk();
-    while let Some(arg) = walk.next() {
-        if arg == param_to_point_at {
-            return true;
-        } else if let ty::GenericArgKind::Type(ty) = arg.unpack()
-            && let ty::Alias(ty::Projection, ..) = ty.kind()
-        {
-            // This logic may seem a bit strange, but typically when
-            // we have a projection type in a function signature, the
-            // argument that's being passed into that signature is
-            // not actually constraining that projection's substs in
-            // a meaningful way. So we skip it, and see improvements
-            // in some UI tests.
-            walk.skip_current_subtree();
-        }
-    }
-    false
 }
