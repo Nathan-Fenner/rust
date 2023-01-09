@@ -525,11 +525,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // Sometimes macros mess up the spans, so do not normalize the
             // arg span to equal the error span, because that's less useful
             // than pointing out the arg expr in the wrong context.
-            if normalized_span.source_equal(error_span) {
-                span
-            } else {
-                normalized_span
-            }
+            if normalized_span.source_equal(error_span) { span } else { normalized_span }
         };
 
         // Precompute the provided types and spans, since that's all we typically need for below
@@ -782,8 +778,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         // can be collated pretty easily if needed.
 
         // Next special case: if there is only one "Incompatible" error, just emit that
-        if let [Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err)))] =
-            &errors[..]
+        if let [
+            Error::Invalid(provided_idx, expected_idx, Compatibility::Incompatible(Some(err))),
+        ] = &errors[..]
         {
             let (formal_ty, expected_ty) = formal_and_expected_inputs[*expected_idx];
             let (provided_ty, provided_arg_span) = provided_arg_tys[*provided_idx];
@@ -1525,21 +1522,25 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                     // Our block must be a `assign desugar local; assignment`
                                     if let Some(hir::Node::Block(hir::Block {
                                         stmts:
-                                            [hir::Stmt {
-                                                kind:
-                                                    hir::StmtKind::Local(hir::Local {
-                                                        source: hir::LocalSource::AssignDesugar(_),
-                                                        ..
-                                                    }),
-                                                ..
-                                            }, hir::Stmt {
-                                                kind:
-                                                    hir::StmtKind::Expr(hir::Expr {
-                                                        kind: hir::ExprKind::Assign(..),
-                                                        ..
-                                                    }),
-                                                ..
-                                            }],
+                                            [
+                                                hir::Stmt {
+                                                    kind:
+                                                        hir::StmtKind::Local(hir::Local {
+                                                            source:
+                                                                hir::LocalSource::AssignDesugar(_),
+                                                            ..
+                                                        }),
+                                                    ..
+                                                },
+                                                hir::Stmt {
+                                                    kind:
+                                                        hir::StmtKind::Expr(hir::Expr {
+                                                            kind: hir::ExprKind::Assign(..),
+                                                            ..
+                                                        }),
+                                                    ..
+                                                },
+                                            ],
                                         ..
                                     })) = self.tcx.hir().find(blk.hir_id)
                                     {

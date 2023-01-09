@@ -1,21 +1,38 @@
+error[E0412]: cannot find type `T` in this scope
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:78:35
+   |
+LL | impl<A> T2 for ComplexImplExample<T> where Option<A>: Copy {}
+   |      -                            ^
+   |      |
+   |      similarly named type parameter `A` defined here
+   |
+help: a type parameter with a similar name exists
+   |
+LL | impl<A> T2 for ComplexImplExample<A> where Option<A>: Copy {}
+   |                                   ~
+help: you might be missing a type parameter
+   |
+LL | impl<A, T> T2 for ComplexImplExample<T> where Option<A>: Copy {}
+   |       +++
+
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:79:60
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:85:60
    |
 LL |     want(Wrapper { value: Burrito { spicy: false, filling: q } });
    |     ---- required by a bound introduced by this call       ^ the trait `T3` is not implemented for `Q`
    |
 note: required for `Burrito<Q>` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:22:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:22:13
    |
 LL | impl<A: T3> T2 for Burrito<A> {}
    |             ^^     ^^^^^^^^^^
 note: required for `Wrapper<Burrito<Q>>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -25,23 +42,23 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:83:84
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:89:84
    |
 LL |     want(Wrapper { value: BurritoKinds::SmallBurrito { spicy: true, small_filling: q } });
    |     ---- required by a bound introduced by this call                               ^ the trait `T3` is not implemented for `Q`
    |
 note: required for `BurritoKinds<Q>` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:32:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:32:13
    |
 LL | impl<D: T3> T2 for BurritoKinds<D> {}
    |             ^^     ^^^^^^^^^^^^^^^
 note: required for `Wrapper<BurritoKinds<Q>>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -51,7 +68,7 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:87:39
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:93:39
    |
 LL |     want(Wrapper { value: Taco(false, q) });
    |     ----                              ^ the trait `T3` is not implemented for `Q`
@@ -59,17 +76,17 @@ LL |     want(Wrapper { value: Taco(false, q) });
    |     required by a bound introduced by this call
    |
 note: required for `Taco<Q>` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:35:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:35:13
    |
 LL | impl<E: T3> T2 for Taco<E> {}
    |             ^^     ^^^^^^^
 note: required for `Wrapper<Taco<Q>>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -79,7 +96,7 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:91:27
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:97:27
    |
 LL |     want(Wrapper { value: TacoKinds::OneTaco(false, q) });
    |     ----                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `T3` is not implemented for `Q`
@@ -87,17 +104,17 @@ LL |     want(Wrapper { value: TacoKinds::OneTaco(false, q) });
    |     required by a bound introduced by this call
    |
 note: required for `TacoKinds<Q>` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:41:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:41:13
    |
 LL | impl<F: T3> T2 for TacoKinds<F> {}
    |             ^^     ^^^^^^^^^^^^
 note: required for `Wrapper<TacoKinds<Q>>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -107,23 +124,23 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:95:74
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:101:74
    |
 LL |     want(Wrapper { value: GenericBurrito { spiciness: NotSpicy, filling: q } });
    |     ---- required by a bound introduced by this call                     ^ the trait `T3` is not implemented for `Q`
    |
 note: required for `GenericBurrito<NotSpicy, Q>` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:47:16
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:47:16
    |
 LL | impl<X, Y: T3> T2 for GenericBurrito<X, Y> {}
    |                ^^     ^^^^^^^^^^^^^^^^^^^^
 note: required for `Wrapper<GenericBurrito<NotSpicy, Q>>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -133,7 +150,7 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T2` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:99:14
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:105:14
    |
 LL |     want((3, q));
    |     ----     ^ the trait `T2` is not implemented for `Q`
@@ -141,12 +158,12 @@ LL |     want((3, q));
    |     required by a bound introduced by this call
    |
 note: required for `(i32, Q)` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:51:20
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:51:20
    |
 LL | impl<A: T2, B: T2> T1 for (A, B) {}
    |                    ^^     ^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -156,7 +173,7 @@ LL | fn example<Q: T2>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:103:31
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:109:31
    |
 LL |     want(Wrapper { value: (3, q) });
    |     ----                      ^ the trait `T3` is not implemented for `Q`
@@ -164,17 +181,17 @@ LL |     want(Wrapper { value: (3, q) });
    |     required by a bound introduced by this call
    |
 note: required for `(i32, Q)` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:50:20
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:50:20
    |
 LL | impl<A: T3, B: T3> T2 for (A, B) {}
    |                    ^^     ^^^^^^
 note: required for `Wrapper<(i32, Q)>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -184,7 +201,7 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:107:15
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:113:15
    |
 LL |     want(((3, q), 5));
    |     ----      ^ the trait `T3` is not implemented for `Q`
@@ -192,17 +209,17 @@ LL |     want(((3, q), 5));
    |     required by a bound introduced by this call
    |
 note: required for `(i32, Q)` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:50:20
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:50:20
    |
 LL | impl<A: T3, B: T3> T2 for (A, B) {}
    |                    ^^     ^^^^^^
 note: required for `((i32, Q), i32)` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:51:20
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:51:20
    |
 LL | impl<A: T2, B: T2> T1 for (A, B) {}
    |                    ^^     ^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -212,7 +229,7 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T1` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:110:49
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:116:49
    |
 LL |     want(DoubleWrapper { item: Wrapper { value: q } });
    |     ----                                        ^ the trait `T1` is not implemented for `Q`
@@ -220,12 +237,12 @@ LL |     want(DoubleWrapper { item: Wrapper { value: q } });
    |     required by a bound introduced by this call
    |
 note: required for `DoubleWrapper<Q>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:72:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:72:13
    |
 LL | impl<T: T1> T1 for DoubleWrapper<T> {}
    |             ^^     ^^^^^^^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -235,20 +252,20 @@ LL | fn example<Q: T1>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T1` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:113:88
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:119:88
    |
 LL |     want(DoubleWrapper { item: Wrapper { value: DoubleWrapper { item: Wrapper { value: q } } } });
    |     ---- required by a bound introduced by this call                                   ^ the trait `T1` is not implemented for `Q`
    |
 note: required for `DoubleWrapper<Q>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:72:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:72:13
    |
 LL | impl<T: T1> T1 for DoubleWrapper<T> {}
    |             ^^     ^^^^^^^^^^^^^^^^
    = note: 1 redundant requirement hidden
    = note: required for `DoubleWrapper<DoubleWrapper<Q>>` to implement `T1`
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -258,7 +275,7 @@ LL | fn example<Q: T1>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T3` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:117:27
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:123:27
    |
 LL |     want(Wrapper { value: AliasBurrito { spiciness: q, filling: q } });
    |     ----                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `T3` is not implemented for `Q`
@@ -266,17 +283,17 @@ LL |     want(Wrapper { value: AliasBurrito { spiciness: q, filling: q } });
    |     required by a bound introduced by this call
    |
 note: required for `GenericBurrito<Q, Q>` to implement `T2`
-  --> $DIR/bad-trait-error-span-in-call.rs:47:16
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:47:16
    |
 LL | impl<X, Y: T3> T2 for GenericBurrito<X, Y> {}
    |                ^^     ^^^^^^^^^^^^^^^^^^^^
 note: required for `Wrapper<GenericBurrito<Q, Q>>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:16:13
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
    |
 LL | impl<B: T2> T1 for Wrapper<B> {}
    |             ^^     ^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -286,7 +303,7 @@ LL | fn example<Q: T3>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T1` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:120:35
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:126:35
    |
 LL |     want(Two { a: Two { a: (), b: q }, b: () });
    |     ----                          ^ the trait `T1` is not implemented for `Q`
@@ -294,12 +311,12 @@ LL |     want(Two { a: Two { a: (), b: q }, b: () });
    |     required by a bound introduced by this call
    |
 note: required for `Two<Two<(), Q>, ()>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:66:19
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:66:19
    |
 LL | impl<X, Y: T1, Z> T1 for Two<Two<X, Y>, Z> {}
    |                   ^^     ^^^^^^^^^^^^^^^^^
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -309,7 +326,7 @@ LL | fn example<Q: T1>(q: Q) {
    |             ++++
 
 error[E0277]: the trait bound `Q: T1` is not satisfied
-  --> $DIR/bad-trait-error-span-in-call.rs:126:59
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:132:59
    |
 LL |     want(
    |     ---- required by a bound introduced by this call
@@ -317,14 +334,14 @@ LL |         Two { a: Two { a: (), b: Two { a: Two { a: (), b: q }, b: () } }, b
    |                                                           ^ the trait `T1` is not implemented for `Q`
    |
 note: required for `Two<Two<(), Q>, ()>` to implement `T1`
-  --> $DIR/bad-trait-error-span-in-call.rs:66:19
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:66:19
    |
 LL | impl<X, Y: T1, Z> T1 for Two<Two<X, Y>, Z> {}
    |                   ^^     ^^^^^^^^^^^^^^^^^
    = note: 1 redundant requirement hidden
    = note: required for `Two<Two<(), Two<Two<(), Q>, ()>>, ()>` to implement `T1`
 note: required by a bound in `want`
-  --> $DIR/bad-trait-error-span-in-call.rs:53:12
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
    |
 LL | fn want<V: T1>(_x: V) {}
    |            ^^ required by this bound in `want`
@@ -333,6 +350,35 @@ help: consider restricting type parameter `Q`
 LL | fn example<Q: T1>(q: Q) {
    |             ++++
 
-error: aborting due to 13 previous errors
+error[E0277]: the trait bound `ComplexImplExample<Vec<_>>: T2` is not satisfied
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:136:27
+   |
+LL |     want(Wrapper { value: ComplexImplExample { value: Wrapper { value: vec![] } } });
+   |     ----                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `T2` is not implemented for `ComplexImplExample<Vec<_>>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = help: the following other types implement trait `T2`:
+             (A, B)
+             Burrito<A>
+             BurritoKinds<D>
+             BurritoTuple<C>
+             GenericBurrito<X, Y>
+             Taco<E>
+             TacoKinds<F>
+             i32
+note: required for `Wrapper<ComplexImplExample<Vec<_>>>` to implement `T1`
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:16:13
+   |
+LL | impl<B: T2> T1 for Wrapper<B> {}
+   |             ^^     ^^^^^^^^^^
+note: required by a bound in `want`
+  --> $DIR/blame-trait-error-spans-on-exprs.rs:53:12
+   |
+LL | fn want<V: T1>(_x: V) {}
+   |            ^^ required by this bound in `want`
 
-For more information about this error, try `rustc --explain E0277`.
+error: aborting due to 15 previous errors
+
+Some errors have detailed explanations: E0277, E0412.
+For more information about an error, try `rustc --explain E0277`.
